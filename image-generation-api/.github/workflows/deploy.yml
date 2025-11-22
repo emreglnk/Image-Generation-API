@@ -1,0 +1,40 @@
+name: Deploy to Self-Hosted
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Create .env File
+      run: |
+        echo "REPLICATE_API_TOKEN=${{ secrets.REPLICATE_API_TOKEN }}" > .env
+        echo "DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }}" >> .env
+        echo "API_SECRET_KEY=${{ secrets.API_SECRET_KEY }}" >> .env
+        echo "ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" >> .env
+        echo "AI_SYSTEM_PROMPT=${{ secrets.AI_SYSTEM_PROMPT }}" >> .env
+        echo "AI_FALLBACK_PROMPT=${{ secrets.AI_FALLBACK_PROMPT }}" >> .env
+        echo "PORT=${{ secrets.PORT || '8000' }}" >> .env
+
+    - name: Setup Python Environment
+      run: |
+        # Create venv if it doesn't exist
+        if [ ! -d "venv" ]; then
+          python3 -m venv venv
+        fi
+        
+        # Install dependencies
+        source venv/bin/activate
+        pip install -r app/requirements.txt
+
+    - name: Restart Service
+      # Requires the systemd service to be named 'image-gen-api'
+      # and the runner user to have sudo privileges
+      run: |
+        sudo systemctl restart image-gen-api || echo "Service not found or permission denied. Please start manually."

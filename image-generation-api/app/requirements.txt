@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+requests
+replicate
+slowapi
+openai
+rembg
+Pillow
