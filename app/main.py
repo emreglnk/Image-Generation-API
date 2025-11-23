@@ -2,7 +2,7 @@ import os
 import io
 import requests
 import replicate
-from fastapi import FastAPI, Header, HTTPException, Security
+from fastapi import FastAPI, Header, HTTPException, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -65,7 +65,7 @@ def get_deepseek_prompt(product_name, style_instruction):
 
 @app.get("/api/generate", dependencies=[Security(verify_token)])
 @limiter.limit("10/minute") # Increased limit for self-hosted
-async def generate_menu_item(w: str, bgstyle: str = "transparent"):
+async def generate_menu_item(request: Request, w: str, bgstyle: str = "transparent"):
     
     if not w:
         raise HTTPException(status_code=400, detail="Product name missing")
