@@ -97,7 +97,8 @@ async def generate_menu_item(request: Request, w: str, bgstyle: str = "transpare
             "google/nano-banana",
             input={"prompt": prompt, "aspect_ratio": "1:1", "output_format": "jpg"}
         )
-        image_url = output[0]
+        # Convert FileOutput iterator to list and get first URL
+        image_url = list(output)[0] if isinstance(output, (list, tuple)) else next(iter(output))
 
         # 4. Download Image
         img_resp = requests.get(image_url)
