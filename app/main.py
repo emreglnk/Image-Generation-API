@@ -1,14 +1,11 @@
 import os
 import io
-import requests
 import replicate
 from fastapi import FastAPI, Header, HTTPException, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from openai import OpenAI
-from rembg import remove
 from PIL import Image, ImageColor
 from fastapi.responses import StreamingResponse
 
@@ -21,13 +18,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Environment Variables
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 API_SECRET_KEY = os.getenv("API_SECRET_KEY")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
-
-# AI Configuration
-AI_SYSTEM_PROMPT = os.getenv("AI_SYSTEM_PROMPT", "You are a food photography prompt engineer. Describe the food item for Flux AI. KEYWORDS: Top-down view, Isolated on White Background, Studio Lighting, Minimalist. Output ONLY the prompt.")
-AI_FALLBACK_PROMPT = os.getenv("AI_FALLBACK_PROMPT", "Professional food photo of {product_name}, isolated on white background.")
 
 # CORS
 app.add_middleware(
@@ -44,93 +36,112 @@ async def verify_token(x_access_token: str = Header(...)):
         raise HTTPException(status_code=403, detail="Access Denied: Invalid Key")
     return x_access_token
 
-# --- AI LOGIC ---
+# --- PROMPT LOGIC ---
 
-def get_deepseek_prompt(product_name, style_instruction):
-    if not DEEPSEEK_API_KEY:
-        return AI_FALLBACK_PROMPT.format(product_name=product_name)
+def create_simple_prompt(product_name, bgstyle):
+    """Generate a simple prompt based on product name and background style"""
+    base_prompt = f"Professional food photography of {product_name}"
     
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/v1")
+    if bgstyle == "transparent":
+        return f"{base_prompt}, isolated on transparent background, studio lighting, top-down view"
+    elif bgstyle == "image":
+        return f"{base_prompt}, natural restaurant setting, lifestyle photography, depth of field"
+    elif bgstyle == "solid":
+        return f"{base_prompt}, neutral gray studio backdrop, soft shadows, minimalist, clean"
+    elif bgstyle.startswith("#"):
+        # Hex color - convert to color name description and include hex for precision
+        color_name = hex_to_color_name(bgstyle)
+        return f"{base_prompt}, isolated on {color_name} background ({bgstyle}), studio lighting, clean, accurate color matching"
+    else:
+        return f"{base_prompt}, white background, studio lighting"
+
+def hex_to_color_name(hex_color):
+    """Convert hex color to descriptive name for prompt"""
     try:
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": AI_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Describe: {product_name}. Style Requirement: {style_instruction}"}
-            ]
-        )
-        return response.choices[0].message.content
+        rgb = ImageColor.getrgb(hex_color)
+        r, g, b = rgb
+        
+        # Simple color mapping
+        if r > 200 and g > 200 and b > 200:
+            return "white"
+        elif r < 50 and g < 50 and b < 50:
+            return "black"
+        elif r > 150 and g < 100 and b < 100:
+            return "red"
+        elif r < 100 and g > 150 and b < 100:
+            return "green"
+        elif r < 100 and g < 100 and b > 150:
+            return "blue"
+        elif r > 150 and g > 150 and b < 100:
+            return "yellow"
+        elif r > 150 and g < 100 and b > 150:
+            return "purple"
+        elif r < 100 and g > 150 and b > 150:
+            return "cyan"
+        elif r > 150 and g > 100 and b < 100:
+            return "orange"
+        elif 100 < r < 200 and 100 < g < 200 and 100 < b < 200:
+            return "gray"
+        else:
+            return "neutral"
     except:
-        return AI_FALLBACK_PROMPT.format(product_name=product_name)
+        return "white"
 
 @app.get("/api/generate", dependencies=[Security(verify_token)])
-@limiter.limit("10/minute") # Increased limit for self-hosted
+@limiter.limit("10/minute")
 async def generate_menu_item(request: Request, w: str, bgstyle: str = "transparent"):
     
     if not w:
         raise HTTPException(status_code=400, detail="Product name missing")
 
     try:
-        # 1. Determine Style & Prompt
-        # 'image': Natural environment
-        # 'solid': AI generated studio background (photobooth style)
-        # 'transparent' or Hex: Isolated for removal
-        
-        if bgstyle == "image":
-            style_instruction = "Natural, lifestyle, restaurant setting, depth of field."
-            needs_rembg = False
-        elif bgstyle == "solid":
-            style_instruction = "Studio lighting, solid neutral background, soft shadows, minimalist."
-            needs_rembg = False
-        else:
-            # For transparent or specific hex color, we need easy isolation
-            style_instruction = "Isolated on white background, top-down view, flat lighting."
-            needs_rembg = True
-
-        # 2. DeepSeek (Prompt Generation)
-        prompt = get_deepseek_prompt(w, style_instruction)
+        # 1. Create Simple Prompt
+        prompt = create_simple_prompt(w, bgstyle)
         print(f"Prompt: {prompt} | Style: {bgstyle}")
 
-        # 3. Replicate (Flux Image Generation)
-        output = replicate.run(
-            # "black-forest-labs/flux-schnell",
-            "google/nano-banana",
-            input={"prompt": prompt, "aspect_ratio": "1:1", "output_format": "jpg"}
-        )
+        # 2. Nano-Banana Configuration
+        nano_input = {
+            "prompt": prompt,
+            "aspect_ratio": "1:1",
+            "output_format": "webp"
+        }
         
-        # 4. Get Image (nano-banana returns FileOutput object)
-        # Read binary data directly from the FileOutput object
+        # Add transparency if needed
+        if bgstyle == "transparent":
+            nano_input["output_format"] = "png"  # PNG supports transparency
+        
+        # 3. Generate Image with Nano-Banana
+        output = replicate.run("google/nano-banana", input=nano_input)
+        
+        # 4. Read Image Data
         image_data = output.read()
         input_img = Image.open(io.BytesIO(image_data)).convert("RGBA")
 
         out = io.BytesIO()
 
-        # 5. Process Image based on bgstyle
-        if needs_rembg:
-            # Remove Background (Local CPU/GPU)
-            no_bg = remove(input_img)
-            
-            if bgstyle == "transparent":
-                # Save as transparent WEBP
-                no_bg.save(out, format="WEBP", quality=95)
-            else:
-                # Assume bgstyle is a Hex Color (e.g., #FF0000)
-                try:
-                    bg_color_rgb = ImageColor.getrgb(bgstyle)
-                    final_bg = Image.new("RGBA", no_bg.size, bg_color_rgb + (255,))
-                    composite = Image.alpha_composite(final_bg, no_bg)
-                    composite.save(out, format="WEBP", quality=95)
-                except ValueError:
-                    # Fallback to transparent if hex is invalid
-                    print(f"Invalid color code: {bgstyle}, falling back to transparent.")
-                    no_bg.save(out, format="WEBP", quality=95)
+        # 5. Process Image for Custom Hex Colors (if needed)
+        if bgstyle.startswith("#") and bgstyle != "transparent":
+            # Apply custom hex color background
+            try:
+                bg_color_rgb = ImageColor.getrgb(bgstyle)
+                final_bg = Image.new("RGBA", input_img.size, bg_color_rgb + (255,))
+                composite = Image.alpha_composite(final_bg, input_img)
+                composite.convert("RGB").save(out, format="WEBP", quality=95)
+            except ValueError:
+                # Fallback to original image
+                print(f"Invalid color code: {bgstyle}, using generated image as-is.")
+                input_img.convert("RGB").save(out, format="WEBP", quality=95)
         else:
-            # No background removal needed (image or solid AI style)
-            input_img.save(out, format="WEBP", quality=95)
+            # Use image as generated by nano-banana
+            if bgstyle == "transparent":
+                input_img.save(out, format="PNG")
+            else:
+                input_img.convert("RGB").save(out, format="WEBP", quality=95)
 
         # 6. Response
         out.seek(0)
-        return StreamingResponse(out, media_type="image/webp")
+        media_type = "image/png" if bgstyle == "transparent" else "image/webp"
+        return StreamingResponse(out, media_type=media_type)
 
     except Exception as e:
         print(f"Error: {e}")
