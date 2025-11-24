@@ -100,15 +100,12 @@ async def generate_menu_item(request: Request, w: str, bgstyle: str = "transpare
         print(f"Prompt: {prompt} | Style: {bgstyle}")
 
         # 2. Nano-Banana Configuration
+        # Nano-banana only supports "jpg" and "png"
         nano_input = {
             "prompt": prompt,
             "aspect_ratio": "1:1",
-            "output_format": "webp"
+            "output_format": "png" if bgstyle == "transparent" else "jpg"
         }
-        
-        # Add transparency if needed
-        if bgstyle == "transparent":
-            nano_input["output_format"] = "png"  # PNG supports transparency
         
         # 3. Generate Image with Nano-Banana
         output = replicate.run("google/nano-banana", input=nano_input)
