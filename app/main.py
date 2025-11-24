@@ -93,7 +93,8 @@ async def generate_menu_item(request: Request, w: str, bgstyle: str = "transpare
 
         # 3. Replicate (Flux Image Generation)
         output = replicate.run(
-            "black-forest-labs/flux-schnell",
+            # "black-forest-labs/flux-schnell",
+            "google/nano-banana",
             input={"prompt": prompt, "aspect_ratio": "1:1", "output_format": "jpg"}
         )
         image_url = output[0]
